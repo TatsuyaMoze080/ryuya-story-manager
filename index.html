@@ -1,0 +1,233 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>竜夜家故事存檔管理器</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:#10121a;color:#f4f4f7;font:16px system-ui,sans-serif}
+header{padding:20px 16px;background:#202437}
+h1{font-size:23px;margin:0 0 8px}
+main{max-width:760px;margin:auto;padding:16px}
+section{background:#1b2030;border:1px solid #343a4d;border-radius:14px;padding:16px;margin:0 0 16px}
+label{display:block;margin:12px 0 6px;font-weight:650}
+input,select,textarea{width:100%;font:inherit;color:white;background:#101521;border:1px solid #515a70;border-radius:9px;padding:12px}
+textarea{min-height:230px;resize:vertical;line-height:1.6}
+button{border:0;border-radius:9px;padding:12px 14px;background:#637ff3;color:white;font:inherit;font-weight:650;margin:6px 6px 6px 0}
+button.secondary{background:#394459}
+button.danger{background:#8d4050}
+.entry{border-top:1px solid #42485c;padding:12px 0}
+.muted{color:#aeb7cc;font-size:13px}
+#status{white-space:pre-wrap;color:#9ee3b0}
+details{margin-top:12px}
+summary{cursor:pointer}
+</style>
+</head>
+<body>
+<header>
+<h1>📚 竜夜家故事存檔管理器</h1>
+<div>手機版・九大部隊・完整正文備份</div>
+</header>
+<main>
+<section>
+<h2>新增／更新故事</h2>
+<label>部隊</label><select id="unit"></select>
+<label>角色正式姓名</label>
+<input id="person" placeholder="例如：竜夜 棺音">
+<label>篇章順序（數字）</label>
+<input id="order" type="number" min="1" value="1">
+<label>篇章標題</label>
+<input id="title" placeholder="例如：破碎的黑棺">
+<label>完整故事正文</label>
+<textarea id="body" placeholder="將 ChatGPT 生成的完整故事貼在這裡。"></textarea>
+<button onclick="saveStory()">💾 儲存並備份</button>
+<button class="secondary" onclick="resetForm()">清空編輯區</button>
+<p id="status" role="status"></p>
+</section>
+<section>
+<h2>故事列表</h2>
+<label>篩選部隊</label>
+<select id="filter" onchange="render()"></select>
+<div id="entries"></div>
+</section>
+<section>
+<h2>備份與匯出</h2>
+<button onclick="exportJSON()">匯出完整 JSON 備份</button>
+<button onclick="exportTXT()">匯出目前部隊 TXT</button>
+<label>匯入 JSON 備份</label>
+<input type="file" id="importfile" accept=".json,application/json" onchange="importJSON(event)">
+<p class="muted">⚠️ 故事保存在目前瀏覽器。清除網站資料或更換手機可能遺失，請定期匯出 JSON。GitHub Pages 不會自動同步故事到 GitHub。</p>
+</section>
+</main>
+<script>
+const KEY='ryuya_stories_v1';
+const UNITS=Array.from({length:9},(_,i)=>`第${'一二三四五六七八九'[i]}部隊`);
+let stories=[];
+let editing=null;
+const $=id=>document.getElementById(id);
+function load(){
+try{
+const x=JSON.parse(localStorage.getItem(KEY)||'[]');
+stories=Array.isArray(x)?x:[];
+}catch(e){alert('讀取資料失敗，請先檢查備份。')}
+}
+function persist(){
+localStorage.setItem(KEY,JSON.stringify(stories))
+}
+function init(){
+UNITS.forEach(u=>{
+$('unit').add(new Option(u,u));
+$('filter').add(new Option(u,u))
+});
+$('filter').add(new Option('全部部隊','all'),0);
+$('filter').value='all';
+load();render()
+}
+function resetForm(){
+editing=null;
+$('person').value='';
+$('order').value=1;
+$('title').value='';
+$('body').value='';
+$('status').textContent=''
+}
+function saveStory(){
+const unit=$('unit').value;
+const person=$('person').value.trim();
+const order=Number($('order').value);
+const title=$('title').value.trim();
+const body=$('body').value;
+if(!person||!title||!body.trim()||!Number.isInteger(order)||order<1){
+alert('請填寫角色、正確順序、標題和完整正文');return
+}
+const id=editing||crypto.randomUUID();
+const idx=stories.findIndex(s=>s.id===id);
+const old=idx>=0?stories[idx]:null;
+const now=new Date().toISOString();
+const history=old?[...(old.history||[]),{
+body:old.body,updatedAt:old.updatedAt,
+title:old.title,order:old.order
+}]:[];
+const entry={id,unit,person,order,title,body,history,updatedAt:now};
+if(old)stories[idx]=entry;
+else stories.push(entry);
+try{
+persist();
+$('status').textContent=`✅ 已儲存：${unit}／${person}／${title}\n正文 ${body.length} 字元；舊版 ${history.length} 份。請定期匯出 JSON。`;
+editing=id;render()
+}catch(e){alert('儲存失敗：可能是瀏覽器容量不足，請先匯出備份。')}
+}
+function render(){
+const list=$('entries');
+list.replaceChildren();
+const selected=$('filter').value;
+const data=stories.filter(s=>selected==='all'||s.unit===selected)
+.sort((a,b)=>UNITS.indexOf(a.unit)-UNITS.indexOf(b.unit)
+||a.person.localeCompare(b.person,'zh-Hant')||a.order-b.order);
+if(!data.length){list.textContent='尚無故事';return}
+for(const s of data){
+const div=document.createElement('div');
+div.className='entry';
+const heading=document.createElement('strong');
+heading.textContent=`${s.unit}｜${s.person}｜${s.order}. ${s.title}`;
+const info=document.createElement('div');
+info.className='muted';
+info.textContent=`${s.body.length} 字元・舊版 ${(s.history||[]).length} 份`;
+const edit=document.createElement('button');
+edit.textContent='編輯';
+edit.onclick=()=>{
+editing=s.id;
+$('unit').value=s.unit;
+$('person').value=s.person;
+$('order').value=s.order;
+$('title').value=s.title;
+$('body').value=s.body;
+window.scrollTo(0,0)
+};
+const download=document.createElement('button');
+download.className='secondary';
+download.textContent='下載 TXT';
+download.onclick=()=>downloadFile(`${s.person}_${s.order}_${s.title}.txt`,formatStory(s),'text/plain;charset=utf-8');
+const remove=document.createElement('button');
+remove.className='danger';
+remove.textContent='刪除';
+remove.onclick=()=>{
+if(confirm(`確定刪除「${s.title}」及其所有舊版？請先備份。`)){
+stories=stories.filter(x=>x.id!==s.id);
+persist();render()
+}};
+div.append(heading,info,edit,download,remove);
+if((s.history||[]).length){
+const details=document.createElement('details');
+const summary=document.createElement('summary');
+summary.textContent='查看歷史版本';
+details.append(summary);
+s.history.forEach((h,i)=>{
+const b=document.createElement('button');
+b.className='secondary';
+b.textContent=`舊版 ${i+1}：下載`;
+b.onclick=()=>downloadFile(`${s.person}_${s.title}_舊版${i+1}.txt`,h.body,'text/plain;charset=utf-8');
+details.append(b)
+});
+div.append(details)
+}
+list.append(div)
+}
+}
+function formatStory(s){
+return `${s.unit}\n${s.person}\n第 ${s.order} 篇：${s.title}\n\n${s.body}\n\n`
+}
+function safeName(s){
+return s.replace(/[\\/:*?"<>|]/g,'_').slice(0,90)
+}
+function downloadFile(name,content,type){
+const blob=new Blob([content],{type});
+const url=URL.createObjectURL(blob);
+const a=document.createElement('a');
+a.href=url;a.download=safeName(name);
+document.body.append(a);a.click();a.remove();
+setTimeout(()=>URL.revokeObjectURL(url),2000)
+}
+function exportJSON(){
+downloadFile('竜夜家_完整故事備份_'+new Date().toISOString().slice(0,10)+'.json',
+JSON.stringify({format:'ryuya-v1',exportedAt:new Date().toISOString(),stories},null,2),
+'application/json')
+}
+function exportTXT(){
+const u=$('filter').value;
+if(u==='all'){alert('請先在故事列表選擇單一部隊');return}
+const data=stories.filter(s=>s.unit===u)
+.sort((a,b)=>a.person.localeCompare(b.person,'zh-Hant')||a.order-b.order);
+if(!data.length){alert('此部隊尚無故事');return}
+downloadFile(u+'_完整故事.txt',
+data.map(formatStory).join('\n'+'='.repeat(35)+'\n\n'),
+'text/plain;charset=utf-8')
+}
+async function importJSON(e){
+const f=e.target.files[0];
+if(!f)return;
+try{
+const obj=JSON.parse(await f.text());
+if(obj.format!=='ryuya-v1'||!Array.isArray(obj.stories))
+throw Error('不是有效的竜夜家備份格式');
+if(!confirm(`即將匯入 ${obj.stories.length} 篇故事。相同 ID 的篇章會被覆蓋，確定繼續？`))return;
+const map=new Map(stories.map(s=>[s.id,s]));
+for(const s of obj.stories){
+if(typeof s.id!=='string'||!UNITS.includes(s.unit)||
+typeof s.body!=='string'||typeof s.person!=='string'||typeof s.title!=='string')
+throw Error('備份內容格式不正確');
+map.set(s.id,s)
+}
+stories=[...map.values()];
+persist();render();
+alert(`成功匯入，共 ${stories.length} 篇故事`)
+}catch(err){alert('匯入失敗：'+err.message)}
+finally{e.target.value=''}
+}
+init();
+</script>
+</body>
+</html>
